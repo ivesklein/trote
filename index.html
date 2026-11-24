@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#0f1115">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Trote · Ida · Cerro · Regreso</title>
+<title>Trote · cronómetro con GPS</title>
 <style>
   :root{
     --bg:#0f1115; --card:#181b22; --line:#2a2f3a; --txt:#f2f3f5; --mute:#8b93a3;
@@ -44,6 +44,12 @@
   .next{margin-top:12px;font-size:14px;color:var(--mute);text-align:center}
   .next b{color:var(--txt);font-weight:600}
 
+  .progs{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
+  .progs button{flex:1;background:transparent;color:var(--mute);padding:9px 6px;font-size:13px;font-weight:600;border-radius:10px}
+  .progs button.on{background:var(--line);color:var(--txt)}
+  .turn{margin-top:12px;font-size:14px;font-weight:600;padding:8px 14px;border-radius:12px;border:1px solid var(--line);
+    background:rgba(255,255,255,.04);text-align:center;display:none}
+  .turn.now{border-color:var(--txt);background:rgba(255,255,255,.12)}
   .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
   .stat{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:9px 10px}
   .stat span{display:block;font-size:11px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -86,11 +92,8 @@
 </head>
 <body>
 
-<div class="top">
-  <div class="ph" id="ph0">Ida<small>5′ + 3/2</small></div>
-  <div class="ph" id="ph1">Cerro<small>1/2 · 10–15′</small></div>
-  <div class="ph" id="ph2">Regreso<small>caminar</small></div>
-</div>
+<div class="progs" id="progs"></div>
+<div class="top" id="chips"></div>
 <div class="gps" id="gps"><i></i><span id="gpsTxt">GPS apagado · toca para activar</span></div>
 
 <div class="banner" id="banner">
@@ -104,6 +107,7 @@
   <div class="clock" id="clock">5:00</div>
   <div class="bar"><i id="bar"></i></div>
   <div class="next" id="next"></div>
+  <div class="turn" id="turn"></div>
 </div>
 
 <div class="stats">
@@ -156,30 +160,57 @@
 <script>
 (function(){
 'use strict';
-const PH_NAMES=['Ida','Cerro','Regreso'];
-const CERRO_CYCLES=5;
 const KEY='trote-gps-v1';
 const $=id=>document.getElementById(id);
 
-// ---------- program ----------
-function seg(phase,i){
-  if(phase===0){
-    if(i===0) return {mode:'walk',dur:300,warm:true};
-    return (i%2===1)?{mode:'trot',dur:180,cycle:Math.ceil(i/2)}:{mode:'walk',dur:120,cycle:i/2};
+// ---------- programs ----------
+const PROGRAMS={
+  cerro:{
+    name:'Ida · Cerro · Regreso', btn:'Cerro',
+    phases:['Ida','Cerro','Regreso'], chips:['5′ + 3/2','1/2 · 10–15′','caminar'], cycles:[0,5,0],
+    intro:'Primero: <b>Caminar 5:00</b>, luego 3′ trote / 2′ caminata',
+    seg(phase,i){
+      if(phase===0){
+        if(i===0) return {mode:'walk',dur:300,warm:true,sub:'calentamiento'};
+        return (i%2===1)?{mode:'trot',dur:180,cycle:Math.ceil(i/2)}:{mode:'walk',dur:120,cycle:i/2};
+      }
+      if(phase===1){
+        if(i>=10) return null;
+        return (i%2===0)?{mode:'trot',dur:60,cycle:i/2+1}:{mode:'walk',dur:120,cycle:(i+1)/2};
+      }
+      if(phase===2) return i===0?{mode:'walk',dur:null,sub:'sin intensidad'}:null;
+      return null;
+    }
+  },
+  int41:{
+    name:'Trote 4/1 · 35 min', btn:'4/1 · 35′', turnaround:true,
+    phases:['Calentamiento','Intervalos','Vuelta a la calma'], short:['Calent.','Intervalos','Calma'],
+    chips:['5′ cam. rápida','5 × (4′ + 1′)','5′ caminar'], cycles:[0,5,0],
+    intro:'Primero: <b>Caminata rápida 5:00</b>, luego 5 × (4′ trote + 1′ caminata)',
+    seg(phase,i){
+      if(phase===0) return i===0?{mode:'walk',dur:300,warm:true,label:'Caminata rápida'}:null;
+      if(phase===1){
+        if(i>=10) return null;
+        return (i%2===0)?{mode:'trot',dur:240,cycle:i/2+1,label:'Trote suave'}:{mode:'walk',dur:60,cycle:(i+1)/2,label:'Caminata'};
+      }
+      if(phase===2) return i===0?{mode:'walk',dur:300,cool:true,label:'Vuelta a la calma'}:null;
+      return null;
+    }
   }
-  if(phase===1){
-    if(i>=CERRO_CYCLES*2) return null;
-    return (i%2===0)?{mode:'trot',dur:60,cycle:i/2+1}:{mode:'walk',dur:120,cycle:(i+1)/2};
-  }
-  if(phase===2) return i===0?{mode:'walk',dur:null}:null;
-  return null;
-}
+};
+let progKey='cerro';
+try{const p=JSON.parse(localStorage.getItem('trote-prefs')||'{}'); if(PROGRAMS[p.prog]) progKey=p.prog;}catch(e){}
+const P=()=>PROGRAMS[progKey];
+const seg=(phase,i)=>P().seg(phase,i);
+const phName=i=>P().phases[i];
+const phShort=i=>(P().short||P().phases)[i];
+function planTotal(){ let t=0; for(let ph=0;ph<3;ph++) for(let i=0;;i++){const s=seg(ph,i); if(!s) break; if(s.dur==null) return null; t+=s.dur*1000;} return t; }
 
 // ---------- state ----------
 let S, T, segs, track, cur, pauseStart;
 const G={watch:null,status:'off',acc:null,lastFix:0,anchor:null,sAlt:null,refAlt:null,err:''};
 function fresh(){
-  S={phase:0,idx:0,segMs:0,phaseMs:0,totMs:0,running:false,started:false,done:false,startWall:null,endWall:null,last:0};
+  S={phase:0,idx:0,segMs:0,phaseMs:0,totMs:0,running:false,started:false,done:false,startWall:null,endWall:null,last:0,turned:null};
   T={dist:0,gain:0,loss:0,pausedMs:0,pauses:0};
   segs=[]; track=[]; cur=null; pauseStart=null;
   G.anchor=null; G.sAlt=null; G.refAlt=null;
@@ -198,6 +229,7 @@ function fmt(ms){
 const nf=(x,d=1)=>(x==null||!isFinite(x))?'–':x.toLocaleString('es-CL',{minimumFractionDigits:d,maximumFractionDigits:d});
 const word=m=>m==='trot'?'Trote':'Caminata';
 const verb=m=>m==='trot'?'Trotar':'Caminar';
+const segName=s=>(s.label||word(s.mode))+(s.warm&&!s.label?' (cal.)':'');
 function pace(kmh){ if(!kmh||kmh<1) return '–'; const s=Math.round(3600/kmh); return Math.floor(s/60)+':'+String(s%60).padStart(2,'0'); }
 
 // ---------- effort (Minetti et al. 2002, energy cost vs grade) ----------
@@ -232,18 +264,64 @@ function cue(){
   if(S.done){beep(660,.15,0);beep(880,.15,.18);beep(1100,.4,.36);vibrate([300,100,300]);
     setTimeout(()=>say('Entrenamiento terminado. '+nf(T.dist/1000,2)+' kilómetros. ¡Bien hecho!'),600);return;}
   const sg=seg(S.phase,S.idx);
-  let txt=verb(sg.mode);
-  if(S.idx===0&&S.phase>0) txt=PH_NAMES[S.phase]+'. '+txt;
+  let txt=sg.label||verb(sg.mode);
+  if(S.idx===0&&S.phase>0&&!sg.label) txt=phName(S.phase)+'. '+txt;
   if(sg.dur) txt+=' '+(sg.dur/60)+(sg.dur===60?' minuto':' minutos');
   if(sg.mode==='trot'){beep(990,.12,0);beep(990,.12,.16);beep(1320,.3,.32);vibrate([200,80,200,80,400]);}
   else{beep(620,.25,0);beep(440,.4,.3);vibrate([500]);}
   setTimeout(()=>say(txt),700);
 }
+function cueTurn(){
+  beep(523,.15,0);beep(659,.15,.17);beep(784,.15,.34);beep(1047,.5,.51);vibrate([600,150,600,150,600]);
+  setTimeout(()=>say('Media vuelta. Da la vuelta y regresa a casa.'),1200);
+}
+
+// ---------- turnaround (halfway point) ----------
+function planRemaining(){
+  const out=[]; let ph=S.phase,i=S.idx,first=true;
+  while(ph<=2){
+    const sg=seg(ph,i); if(!sg){ph++;i=0;continue;}
+    if(sg.dur==null) return null;
+    const ms=sg.dur*1000-(first?S.segMs:0); first=false;
+    if(ms>0) out.push({mode:sg.mode,cool:!!sg.cool,s:ms/1000});
+    i++;
+  }
+  return out;
+}
+function speeds(){ // measured average speeds (m/s) from tramos of 45 s or more
+  let ts=0,td=0,ws=0,wd=0;
+  segs.forEach(s=>{ if(s.ms<45000) return; if(s.mode==='trot'){ts+=s.ms/1000;td+=s.dist;} else {ws+=s.ms/1000;wd+=s.dist;} });
+  if(td+wd<100) return null;
+  let vT=ts?td/ts:null, vW=ws?wd/ws:null;
+  if(vT==null&&vW) vT=vW*1.4;
+  if(vW==null&&vT) vW=vT/1.4;
+  if(!(vT>0.3)||!(vW>0.3)) return null;
+  return {vT,vW};
+}
+function turnCalc(){
+  if(!P().turnaround||!S.started||S.done||S.turned) return null;
+  const rem=planRemaining(); if(!rem) return null;
+  const remS=rem.reduce((a,r)=>a+r.s,0), total=planTotal()/1000;
+  const sp=G.status==='ok'?speeds():null;
+  if(!sp) return {mode:'time',tLeft:(remS-total/2)*1000,at:null};
+  const v=r=>r.mode==='trot'?sp.vT:(r.cool?sp.vW*0.9:sp.vW);
+  const totalRem=rem.reduce((a,r)=>a+r.s*v(r),0);   // distance the rest of the plan will cover
+  const need=(totalRem-T.dist)/2;                    // go this much further, then the rest brings you home
+  if(need<=0) return {mode:'gps',tLeft:0,at:T.dist};
+  let acc=0,t=0;
+  for(const r of rem){ const d=r.s*v(r); if(acc+d>=need){t+=(need-acc)/v(r);break;} acc+=d; t+=r.s; }
+  return {mode:'gps',tLeft:t*1000,at:T.dist+need};
+}
+function checkTurn(){
+  if(!S.running) return;
+  const tc=turnCalc();
+  if(tc&&tc.tLeft<=0){ S.turned={t:S.totMs,d:T.dist,mode:tc.mode}; if(cur) cur.turn=true; cueTurn(); save(); }
+}
 
 // ---------- segments ----------
 function openSeg(){
   const sg=seg(S.phase,S.idx);
-  cur={n:segs.length+1,phase:S.phase,mode:sg.mode,plan:sg.dur,cycle:sg.cycle||0,warm:!!sg.warm,
+  cur={n:segs.length+1,phase:S.phase,mode:sg.mode,plan:sg.dur,cycle:sg.cycle||0,warm:!!sg.warm,label:sg.label||'',cool:!!sg.cool,
        startT:S.totMs,ms:0,pausedMs:0,pauses:0,dist:0,gain:0,loss:0,a0:G.sAlt,a1:G.sAlt,open:true};
   segs.push(cur);
 }
@@ -338,11 +416,13 @@ function releaseWake(){ try{wake&&wake.release();}catch(e){} wake=null; }
 // ---------- persistence ----------
 function save(){
   if(!S.started) return;
-  try{localStorage.setItem(KEY,JSON.stringify({S,T,segs,track,pauseStart,sAlt:G.sAlt,savedAt:Date.now(),wasRunning:S.running}));}catch(e){}
+  try{localStorage.setItem(KEY,JSON.stringify({prog:progKey,S,T,segs,track,pauseStart,sAlt:G.sAlt,savedAt:Date.now(),wasRunning:S.running}));}catch(e){}
 }
 function loadSaved(){ try{return JSON.parse(localStorage.getItem(KEY)||'null');}catch(e){return null;} }
 function restore(d){
-  S=d.S;T=d.T;segs=d.segs;track=d.track;G.sAlt=d.sAlt;G.refAlt=d.sAlt;G.anchor=null;
+  if(PROGRAMS[d.prog]) progKey=d.prog; else progKey='cerro';
+  renderChips();
+  S=d.S; if(S.turned===undefined) S.turned=null;T=d.T;segs=d.segs;track=d.track;G.sAlt=d.sAlt;G.refAlt=d.sAlt;G.anchor=null;
   cur=segs.find(s=>s.open)||null;
   S.running=false;
   if(!S.done){
@@ -357,8 +437,32 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 // ---------- render ----------
+function renderChips(){
+  $('chips').innerHTML=[0,1,2].map(i=>`<div class="ph" id="ph${i}">${phShort(i)}<small>${P().chips[i]}</small></div>`).join('');
+  $('progs').innerHTML=Object.entries(PROGRAMS).map(([k,p])=>`<button data-k="${k}" class="${k===progKey?'on':''}">${p.btn}</button>`).join('');
+  $('progs').querySelectorAll('button').forEach(b=>b.onclick=()=>{
+    if(S.started) return; progKey=b.dataset.k; savePrefs(); renderChips(); render(); drawChart(); renderLog();
+  });
+}
+function renderTurn(){
+  const el=$('turn');
+  if(!P().turnaround){el.style.display='none';return;}
+  el.style.display='block'; el.classList.remove('now');
+  if(S.turned){
+    el.innerHTML=`↩ Vuelta a los ${fmt(S.turned.t)} · ${nf(S.turned.d/1000,2)} km`+(S.done?'':' — rumbo a casa');
+    if(!S.done&&S.totMs-S.turned.t<20000) el.classList.add('now');
+    return;
+  }
+  if(!S.started||S.done){el.innerHTML='↩ Te aviso cuándo dar la vuelta para llegar a casa a tiempo';return;}
+  const tc=turnCalc();
+  if(!tc){el.style.display='none';return;}
+  el.innerHTML='↩ Vuelta en '+fmt(tc.tLeft+999)+(tc.at!=null?' · a '+nf(tc.at/1000,2)+' km':'')+
+    (tc.mode==='time'?'<br><span style="font-size:11px;font-weight:400;color:var(--mute)">Por tiempo (a la mitad); con GPS se ajusta a tu ritmo</span>':'');
+}
 function render(){
   const root=document.documentElement;
+  $('progs').style.display=S.started?'none':'flex';
+  renderTurn();
   for(let i=0;i<3;i++){const el=$('ph'+i);el.classList.toggle('on',i===S.phase&&!S.done&&S.started);el.classList.toggle('past',i<S.phase||S.done);}
 
   // gps chip
@@ -378,7 +482,7 @@ function render(){
   $('sDist').innerHTML=nf(T.dist/1000,2)+'<small> km</small>';
   if(cur){const st=segStats(cur);$('sSeg').innerHTML=Math.round(cur.dist)+'<small> m'+(st.kmh!=null?' · '+nf(st.kmh)+' km/h':'')+'</small>';}
   else $('sSeg').textContent='–';
-  $('phLabel').textContent='En '+PH_NAMES[S.phase].toLowerCase();
+  $('phLabel').textContent='En '+phShort(S.phase).toLowerCase();
   $('sPh').textContent=fmt(S.phaseMs);$('sTot').textContent=fmt(S.totMs);
 
   if(S.done){
@@ -395,29 +499,41 @@ function render(){
   root.style.setProperty('--accent',sg.mode==='trot'?'var(--trot)':'var(--walk)');
   $('mode').textContent=!S.started?'LISTO':(sg.mode==='trot'?'TROTA':'CAMINA');
   if(S.started){
-    let sub=PH_NAMES[S.phase];
-    if(S.phase===0) sub+=sg.warm?' · calentamiento':' · ciclo '+sg.cycle;
-    if(S.phase===1) sub+=' · ciclo '+sg.cycle+' de '+CERRO_CYCLES;
-    if(S.phase===2) sub+=' · sin intensidad';
+    let sub=phName(S.phase);
+    const tot=P().cycles[S.phase];
+    if(sg.cycle) sub+=' · '+(sg.label?sg.label.toLowerCase()+' · ':'')+'ciclo '+sg.cycle+(tot?' de '+tot:'');
+    else if(sg.sub) sub+=' · '+sg.sub;
+    else if(sg.label&&sg.label!==phName(S.phase)) sub+=' · '+sg.label;
     if(!S.running) sub+=' · EN PAUSA';
     $('sub').textContent=sub;
-  } else $('sub').textContent='Ida · empieza caminando';
+  } else $('sub').textContent=P().name;
 
   if(sg.dur){$('clock').textContent=fmt(sg.dur*1000-S.segMs+999);$('bar').style.width=Math.min(100,S.segMs/(sg.dur*10))+'%';}
   else{$('clock').textContent=fmt(S.segMs);$('bar').style.width='100%';}
 
   const nx=seg(S.phase,S.idx+1);let t;
-  if(!S.started) t='Primero: <b>Caminar 5:00</b>, luego 3′ trote / 2′ caminata';
-  else if(nx) t='Luego: <b>'+verb(nx.mode)+' '+fmt(nx.dur*1000)+'</b>'+(S.phase===0&&!sg.warm?'<br><span style="font-size:12px">Alterna hasta la entrada del cerro</span>':'');
-  else if(S.phase===1) t='Luego: <b>Regreso caminando</b>';
-  else t='Presiona <b>Terminar</b> al llegar';
+  const isCerro=progKey==='cerro';
+  if(!S.started) t=P().intro;
+  else if(isCerro){
+    if(nx) t='Luego: <b>'+verb(nx.mode)+' '+fmt(nx.dur*1000)+'</b>'+(S.phase===0&&!sg.warm?'<br><span style="font-size:12px">Alterna hasta la entrada del cerro</span>':'');
+    else if(S.phase===1) t='Luego: <b>Regreso caminando</b>';
+    else t='Presiona <b>Terminar</b> al llegar';
+  } else {
+    const n=nx||(S.phase<2?seg(S.phase+1,0):null);
+    t=n?'Luego: <b>'+(n.label||verb(n.mode))+' '+fmt(n.dur*1000)+'</b>':'Último tramo · termina solo';
+  }
   $('next').innerHTML=t;
 
   $('go').textContent=!S.started?'Comenzar':(S.running?'Pausa':'Seguir');
   const pb=$('phaseBtn');pb.disabled=!S.started;
-  if(S.phase===0){pb.textContent='Llegué a la entrada →';pb.classList.toggle('hl',S.started&&!sg.warm);}
-  else if(S.phase===1){const ok=S.phaseMs>=600000;pb.textContent=ok?'Terminar subida →':'Terminar subida ('+fmt(600000-S.phaseMs)+')';pb.classList.toggle('hl',ok);}
-  else{pb.textContent='Terminar ✓';pb.classList.add('hl');}
+  if(isCerro){
+    if(S.phase===0){pb.textContent='Llegué a la entrada →';pb.classList.toggle('hl',S.started&&!sg.warm);}
+    else if(S.phase===1){const ok=S.phaseMs>=600000;pb.textContent=ok?'Terminar subida →':'Terminar subida ('+fmt(600000-S.phaseMs)+')';pb.classList.toggle('hl',ok);}
+    else{pb.textContent='Terminar ✓';pb.classList.add('hl');}
+  } else {
+    pb.classList.remove('hl');
+    pb.textContent=S.phase<2?'Saltar fase →':'Terminar ahora ✓';
+  }
   $('skipBtn').disabled=!S.started||sg.dur==null;
 }
 
@@ -474,7 +590,9 @@ function drawChart(){
   ctx.setLineDash([3,3]);ctx.strokeStyle='#5a6273';ctx.fillStyle='#c7ccd6';ctx.textAlign='left';ctx.textBaseline='top';
   segs.forEach((s,i)=>{ if(i===0||s.phase!==segs[i-1].phase){const x=Math.round(X(s.startT))+.5;
     if(i>0){ctx.beginPath();ctx.moveTo(x,Tp);ctx.lineTo(x,Tp+ph);ctx.stroke();}
-    ctx.fillText(PH_NAMES[s.phase],x+3,Tp);} });
+    ctx.fillText(phShort(s.phase),x+3,Tp);} });
+  if(S.turned){const x=Math.round(X(S.turned.t))+.5;ctx.strokeStyle='#f2f3f5';ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,Tp+12);ctx.lineTo(x,Tp+ph);ctx.stroke();
+    ctx.fillStyle='#f2f3f5';ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText('↩ vuelta',x,Tp+ph-2);ctx.lineWidth=1;}
   ctx.setLineDash([]);
   if(!segs.length){ctx.fillStyle='#8b93a3';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('El gráfico se llena a medida que avanzas',L+pw/2,Tp+ph/2);}
 }
@@ -503,14 +621,15 @@ function renderLog(){
     ['Vel. media',v==null?'–':nf(v)+' km/h'],['Pausas',T.pauses+' · '+fmt(tp)],
     ['Trote prom.',vt==null?'–':nf(vt)+' km/h'],['Caminata prom.',vw==null?'–':nf(vw)+' km/h'],
     ['Subida',hasAlt()?'+'+Math.round(T.gain)+' m':'–'],['Bajada',hasAlt()?'−'+Math.round(T.loss)+' m':'–'],
+    ...(S.turned?[['Ida',fmt(S.turned.t)+' · '+nf(S.turned.d/1000,2)+' km'],['Regreso',fmt(S.totMs-S.turned.t)+' · '+nf((T.dist-S.turned.d)/1000,2)+' km']]:[]),
   ].map(([k,x])=>`<div><span>${k}</span><b>${x}</b></div>`).join('');
   let h='<tr><th>#</th><th>Tramo</th><th>Tiempo</th><th>m</th><th>km/h</th><th>Pend.</th><th>Esf.</th><th>Pausa</th></tr>';
   let lastP=-1;
   segs.forEach(s=>{
     if(s.phase!==lastP){lastP=s.phase;const a=phaseAgg(s.phase);
-      h+=`<tr class="phase"><td colspan="8">${PH_NAMES[s.phase].toUpperCase()} · ${fmt(a.ms)} · ${nf(a.dist/1000,2)} km${hasAlt()?' · +'+Math.round(a.gain)+'/−'+Math.round(a.loss)+' m':''}</td></tr>`;}
+      h+=`<tr class="phase"><td colspan="8">${phName(s.phase).toUpperCase()} · ${fmt(a.ms)} · ${nf(a.dist/1000,2)} km${hasAlt()?' · +'+Math.round(a.gain)+'/−'+Math.round(a.loss)+' m':''}</td></tr>`;}
     const o=segStats(s);
-    h+=`<tr class="${s.open?'live':''}"><td>${s.n}</td><td><span class="dot" style="background:var(--${s.mode==='trot'?'trot':'walk'})"></span>${word(s.mode)}${s.warm?' (cal.)':''}</td>`+
+    h+=`<tr class="${s.open?'live':''}"><td>${s.n}</td><td><span class="dot" style="background:var(--${s.mode==='trot'?'trot':'walk'})"></span>${segName(s)}${s.turn?' ↩':''}</td>`+
        `<td>${fmt(s.ms)}</td><td>${Math.round(s.dist)}</td><td>${nf(o.kmh)}</td><td>${gradeTxt(o.grade)}</td><td>${nf(o.eq)}</td>`+
        `<td>${s.pauses?s.pauses+'×'+fmt(s.pausedMs+(s.open?livePaused():0)):'–'}</td></tr>`;
   });
@@ -524,7 +643,7 @@ function buildText(){
   const tp=T.pausedMs+livePaused(),wall=S.startWall?((S.endWall||Date.now())-S.startWall):0;
   const v=kmhOf(T.dist,S.totMs);
   const L=[];
-  L.push('🏃 Trote · '+date+(S.done?'':' (en curso)'));
+  L.push('🏃 '+P().name+' · '+date+(S.done?'':' (en curso)'));
   L.push('');
   L.push(`📏 ${nf(T.dist/1000,2)} km · ${nf(v)} km/h · ${pace(v)} min/km`);
   L.push(`⏱ En movimiento ${fmt(S.totMs)} · total ${fmt(wall)}`);
@@ -533,18 +652,24 @@ function buildText(){
   let at={tm:0,td:0,wm:0,wd:0};segs.forEach(s=>{if(s.mode==='trot'){at.tm+=s.ms;at.td+=s.dist;}else{at.wm+=s.ms;at.wd+=s.dist;}});
   if(at.tm) L.push(`🟠 Trote: ${fmt(at.tm)} · ${nf(at.td/1000,2)} km · ${nf(kmhOf(at.td,at.tm))} km/h (${pace(kmhOf(at.td,at.tm))}/km)`);
   if(at.wm) L.push(`🟢 Caminata: ${fmt(at.wm)} · ${nf(at.wd/1000,2)} km · ${nf(kmhOf(at.wd,at.wm))} km/h`);
+  if(S.turned){
+    L.push(`↩ Vuelta a los ${fmt(S.turned.t)} · ${nf(S.turned.d/1000,2)} km`+(S.turned.mode==='time'?' (por tiempo)':''));
+    L.push(`   Ida ${fmt(S.turned.t)} · ${nf(S.turned.d/1000,2)} km  |  Regreso ${fmt(S.totMs-S.turned.t)} · ${nf((T.dist-S.turned.d)/1000,2)} km`);
+    const pt=planTotal(); if(pt&&S.done) L.push(`   Plan ${fmt(pt)} · real ${fmt(S.totMs)} (${S.totMs>=pt?'+':'−'}${fmt(Math.abs(S.totMs-pt))})`);
+  }
   let lastP=-1;
   segs.forEach(s=>{
     if(s.phase!==lastP){lastP=s.phase;const a=phaseAgg(s.phase);
       L.push('');
-      L.push(`— ${PH_NAMES[s.phase].toUpperCase()} — ${fmt(a.ms)} · ${nf(a.dist/1000,2)} km · ${nf(kmhOf(a.dist,a.ms))} km/h`+(hasAlt()?` · +${Math.round(a.gain)}/−${Math.round(a.loss)} m`:'')+(a.pauses?` · ${a.pauses} pausa${a.pauses>1?'s':''}`:''));}
+      L.push(`— ${phName(s.phase).toUpperCase()} — ${fmt(a.ms)} · ${nf(a.dist/1000,2)} km · ${nf(kmhOf(a.dist,a.ms))} km/h`+(hasAlt()?` · +${Math.round(a.gain)}/−${Math.round(a.loss)} m`:'')+(a.pauses?` · ${a.pauses} pausa${a.pauses>1?'s':''}`:''));}
     const o=segStats(s);
-    let line=`${s.n}. ${word(s.mode)}${s.warm?' (calentamiento)':''} ${fmt(s.ms)}`;
+    let line=`${s.n}. ${s.label||word(s.mode)}${s.warm&&!s.label?' (calentamiento)':''} ${fmt(s.ms)}`;
     if(s.plan&&Math.abs(s.ms-s.plan*1000)>2000) line+=` (de ${fmt(s.plan*1000)})`;
     line+=` · ${Math.round(s.dist)} m · ${nf(o.kmh)} km/h`;
     if(s.mode==='trot') line+=` · ${pace(o.kmh)}/km`;
     if(o.grade!=null) line+=` · pend ${gradeTxt(o.grade)} · esf ${nf(o.eq)}`;
     if(s.pauses) line+=` · ⏸${s.pauses} (${fmt(s.pausedMs+(s.open?livePaused():0))})`;
+    if(s.turn) line+=' · ↩ vuelta';
     L.push(line);
   });
   if(hasAlt()){L.push('');L.push('esf = velocidad equivalente en plano (km/h), ajustada por pendiente.');}
@@ -554,7 +679,7 @@ function buildTSV(){
   const n=(x,dd=1)=>(x==null||!isFinite(x))?'':x.toFixed(dd).replace('.',',');
   const rows=[['Tramo','Fase','Tipo','Ciclo','Plan (s)','Tiempo (s)','Distancia (m)','Velocidad (km/h)','Ritmo (min/km)','Pendiente (%)','Subida (m)','Bajada (m)','Esfuerzo (km/h eq.)','Pausas','Tiempo pausa (s)']];
   segs.forEach(s=>{const o=segStats(s);
-    rows.push([s.n,PH_NAMES[s.phase],word(s.mode)+(s.warm?' (cal.)':''),s.warm?'':s.cycle,s.plan||'',Math.round(s.ms/1000),Math.round(s.dist),n(o.kmh),o.kmh?pace(o.kmh):'',
+    rows.push([s.n,phName(s.phase),segName(s)+(s.turn?' ↩':''),s.warm?'':s.cycle,s.plan||'',Math.round(s.ms/1000),Math.round(s.dist),n(o.kmh),o.kmh?pace(o.kmh):'',
       o.grade==null?'':n(o.grade*100),Math.round(s.gain),Math.round(s.loss),n(o.eq),s.pauses,Math.round((s.pausedMs+(s.open?livePaused():0))/1000)]);});
   return rows.map(r=>r.join('\t')).join('\n');
 }
@@ -574,6 +699,7 @@ function tick(){
     if(sg&&sg.dur){const left=Math.ceil((sg.dur*1000-S.segMs)/1000);
       if(left<=3&&left>=1&&left!==lastCount){lastCount=left;beep(880,.07,0,.25);}}
   }
+  checkTurn();
   render();
   if(++slow>=5){slow=0;drawChart();renderLog();}
 }
@@ -619,7 +745,7 @@ $('resetBtn').onclick=()=>{
 $('gps').onclick=()=>{ if(G.status==='off'||G.status==='denied'||G.status==='err'){G.status='off';startGPS();render();} };
 $('copyTxt').onclick=()=>copy(buildText());
 $('copyTsv').onclick=()=>copy(buildTSV());
-function savePrefs(){try{localStorage.setItem('trote-prefs',JSON.stringify({snd,vox}));}catch(e){}}
+function savePrefs(){try{localStorage.setItem('trote-prefs',JSON.stringify({snd,vox,prog:progKey}));}catch(e){}}
 function paintToggles(){$('sndT').classList.toggle('on',snd);$('voxT').classList.toggle('on',vox);
   $('sndT').textContent=(snd?'🔔':'🔕')+' Sonido';$('voxT').textContent=(vox?'🗣':'🤐')+' Voz';}
 $('sndT').onclick=()=>{snd=!snd;ensureAudio();if(snd)beep(880,.1,0);paintToggles();savePrefs();};
@@ -639,7 +765,7 @@ if(saved&&saved.S&&saved.S.started){
   $('bDiscard').onclick=()=>{try{localStorage.removeItem(KEY);}catch(e){}$('banner').style.display='none';};
 }
 
-paintToggles();render();drawChart();renderLog();
+renderChips();paintToggles();render();drawChart();renderLog();
 })();
 </script>
 </body>

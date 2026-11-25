@@ -44,9 +44,17 @@
   .next{margin-top:12px;font-size:14px;color:var(--mute);text-align:center}
   .next b{color:var(--txt);font-weight:600}
 
-  .progs{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
-  .progs button{flex:1;background:transparent;color:var(--mute);padding:9px 6px;font-size:13px;font-weight:600;border-radius:10px}
-  .progs button.on{background:var(--line);color:var(--txt)}
+  .progs{display:flex;flex-direction:column;gap:8px}
+  .seg2{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
+  .seg2 button{flex:1;background:transparent;color:var(--mute);padding:9px 6px;font-size:14px;font-weight:600;border-radius:10px}
+  .seg2 button.on{background:var(--line);color:var(--txt)}
+  .lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
+  .lvls button{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 2px;color:var(--mute);
+    display:flex;flex-direction:column;align-items:center;gap:2px;line-height:1.15}
+  .lvls button b{font-size:12px;color:var(--txt)}
+  .lvls button span{font-size:11px}
+  .lvls button small{font-size:10px;opacity:.75}
+  .lvls button.on{border-color:var(--trot);box-shadow:inset 0 0 0 1px var(--trot);color:var(--txt)}
   .turn{margin-top:12px;font-size:14px;font-weight:600;padding:8px 14px;border-radius:12px;border:1px solid var(--line);
     background:rgba(255,255,255,.04);text-align:center;display:none}
   .turn.now{border-color:var(--txt);background:rgba(255,255,255,.12)}
@@ -181,23 +189,40 @@ const PROGRAMS={
       if(phase===2) return i===0?{mode:'walk',dur:null,sub:'sin intensidad'}:null;
       return null;
     }
-  },
-  int41:{
-    name:'Trote 4/1 · 35 min', btn:'4/1 · 35′', turnaround:true,
-    phases:['Calentamiento','Intervalos','Vuelta a la calma'], short:['Calent.','Intervalos','Calma'],
-    chips:['5′ cam. rápida','5 × (4′ + 1′)','5′ caminar'], cycles:[0,5,0],
-    intro:'Primero: <b>Caminata rápida 5:00</b>, luego 5 × (4′ trote + 1′ caminata)',
+  }
+};
+// Trote plano: warm-up, intervals (or continuous), cool-down. Turnaround at the real halfway point.
+const FLAT_LEVELS=[
+  {key:'int41', lvl:'Nivel 1', trot:240},
+  {key:'int451',lvl:'Nivel 2', trot:270},
+  {key:'int51', lvl:'Nivel 3', trot:300},
+  {key:'int61', lvl:'Nivel 4', trot:360},
+  {key:'cont30',lvl:'Meta',    trot:1800, continuous:true},
+];
+const mmss=s=>Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+FLAT_LEVELS.forEach(L=>{
+  const cont=!!L.continuous;
+  const total=(600+(cont?L.trot:5*(L.trot+60)))/60;
+  const totTxt=String(total).replace('.',',');
+  const pattern=cont?'30′ continuo':mmss(L.trot)+' / 1:00 × 5';
+  PROGRAMS[L.key]={
+    flat:true, level:L.lvl, pattern, trotTotal:cont?30:5*L.trot/60,
+    name:'Trote plano · '+L.lvl+' · '+pattern+' · '+totTxt+' min', turnaround:true,
+    phases:['Calentamiento',cont?'Trote continuo':'Intervalos','Vuelta a la calma'], short:['Calent.',cont?'Trote':'Intervalos','Calma'],
+    chips:['5′ cam. rápida',cont?'30′ seguidos':'5 × ('+mmss(L.trot)+' + 1′)','5′ caminar'], cycles:[0,cont?0:5,0],
+    intro:'Primero: <b>Caminata rápida 5:00</b>, luego '+(cont?'<b>30 min de trote continuo</b>':'5 × ('+mmss(L.trot)+' trote + 1′ caminata)')+' · total '+totTxt+' min',
     seg(phase,i){
       if(phase===0) return i===0?{mode:'walk',dur:300,warm:true,label:'Caminata rápida'}:null;
       if(phase===1){
+        if(cont) return i===0?{mode:'trot',dur:L.trot,label:'Trote suave'}:null;
         if(i>=10) return null;
-        return (i%2===0)?{mode:'trot',dur:240,cycle:i/2+1,label:'Trote suave'}:{mode:'walk',dur:60,cycle:(i+1)/2,label:'Caminata'};
+        return (i%2===0)?{mode:'trot',dur:L.trot,cycle:i/2+1,label:'Trote suave'}:{mode:'walk',dur:60,cycle:(i+1)/2,label:'Caminata'};
       }
       if(phase===2) return i===0?{mode:'walk',dur:300,cool:true,label:'Vuelta a la calma'}:null;
       return null;
     }
-  }
-};
+  };
+});
 let progKey='cerro';
 try{const p=JSON.parse(localStorage.getItem('trote-prefs')||'{}'); if(PROGRAMS[p.prog]) progKey=p.prog;}catch(e){}
 const P=()=>PROGRAMS[progKey];
@@ -437,11 +462,18 @@ document.addEventListener('visibilitychange',()=>{
 });
 
 // ---------- render ----------
+let lastFlat='int451';
+try{const p=JSON.parse(localStorage.getItem('trote-prefs')||'{}'); if(PROGRAMS[p.lastFlat]) lastFlat=p.lastFlat;}catch(e){}
 function renderChips(){
   $('chips').innerHTML=[0,1,2].map(i=>`<div class="ph" id="ph${i}">${phShort(i)}<small>${P().chips[i]}</small></div>`).join('');
-  $('progs').innerHTML=Object.entries(PROGRAMS).map(([k,p])=>`<button data-k="${k}" class="${k===progKey?'on':''}">${p.btn}</button>`).join('');
+  const isFlat=!!P().flat;
+  $('progs').innerHTML=
+    `<div class="seg2"><button data-k="cerro" class="${!isFlat?'on':''}">Cerro</button><button data-k="${isFlat?progKey:lastFlat}" class="${isFlat?'on':''}">Trote plano</button></div>`+
+    (isFlat?`<div class="lvls">`+FLAT_LEVELS.map(L=>{const p=PROGRAMS[L.key];
+      return `<button data-k="${L.key}" class="${L.key===progKey?'on':''}"><b>${L.lvl}</b><span>${p.pattern}</span><small>${String(p.trotTotal).replace('.',',')}′ trote</small></button>`;}).join('')+`</div>`:'');
   $('progs').querySelectorAll('button').forEach(b=>b.onclick=()=>{
-    if(S.started) return; progKey=b.dataset.k; savePrefs(); renderChips(); render(); drawChart(); renderLog();
+    if(S.started) return; progKey=b.dataset.k; if(P().flat) lastFlat=progKey;
+    savePrefs(); renderChips(); render(); drawChart(); renderLog();
   });
 }
 function renderTurn(){
@@ -745,7 +777,7 @@ $('resetBtn').onclick=()=>{
 $('gps').onclick=()=>{ if(G.status==='off'||G.status==='denied'||G.status==='err'){G.status='off';startGPS();render();} };
 $('copyTxt').onclick=()=>copy(buildText());
 $('copyTsv').onclick=()=>copy(buildTSV());
-function savePrefs(){try{localStorage.setItem('trote-prefs',JSON.stringify({snd,vox,prog:progKey}));}catch(e){}}
+function savePrefs(){try{localStorage.setItem('trote-prefs',JSON.stringify({snd,vox,prog:progKey,lastFlat}));}catch(e){}}
 function paintToggles(){$('sndT').classList.toggle('on',snd);$('voxT').classList.toggle('on',vox);
   $('sndT').textContent=(snd?'🔔':'🔕')+' Sonido';$('voxT').textContent=(vox?'🗣':'🤐')+' Voz';}
 $('sndT').onclick=()=>{snd=!snd;ensureAudio();if(snd)beep(880,.1,0);paintToggles();savePrefs();};

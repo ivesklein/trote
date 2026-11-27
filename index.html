@@ -55,7 +55,7 @@
 
   .progs{display:flex;flex-direction:column;gap:8px}
   .seg2{display:flex;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px}
-  .seg2 button{flex:1;background:transparent;color:var(--mute);padding:9px 2px;font-size:13px;font-weight:600;border-radius:10px}
+  .seg2 button{flex:1;background:transparent;color:var(--mute);padding:9px 1px;font-size:12px;font-weight:600;border-radius:10px}
   .seg2 button.on{background:var(--line);color:var(--txt)}
   .lvls{display:grid;grid-template-columns:repeat(5,1fr);gap:5px}
   .lvls button{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 2px;color:var(--mute);
@@ -301,6 +301,14 @@ PROGRAMS.eval={
     }
   };
 }
+// Solo monitor cardíaco: registro libre sin plan, con vueltas opcionales.
+PROGRAMS.monitor={
+  kind:'hr', btn:'Monitor', gps:false, laps:true,
+  name:'Monitor cardíaco · registro libre',
+  phases:['Monitor'], chips:['registro libre · vueltas opcionales'], cycles:[0],
+  intro:'Registra tu pulso sin plan. <b>Nueva vuelta</b> separa tramos; <b>Terminar</b> cierra el registro.',
+  seg(phase,i){ return phase===0?{mode:'still',dur:null,label:'Vuelta '+(i+1)}:null; }
+};
 PROGRAMS.cerro.kind='run'; FLAT_LEVELS.forEach(L=>PROGRAMS[L.key].kind='run');
 let progKey='cerro';
 try{const p=JSON.parse(localStorage.getItem('trote-prefs')||'{}'); if(PROGRAMS[p.prog]) progKey=p.prog;}catch(e){}
@@ -451,6 +459,7 @@ function closeSeg(){
 }
 function nextPhase(){
   S.phase++;S.idx=0;S.segMs=0;
+  while(S.phase<=2&&!seg(S.phase,0)) S.phase++;
   if(S.phase<=2) S.phaseMs=0;
   if(S.phase>2){S.phase=2;S.done=true;S.running=false;S.endWall=Date.now();pauseStart=null;releaseWake();stopGPS();save();}
   else openSeg();
@@ -633,11 +642,11 @@ document.addEventListener('visibilitychange',()=>{
 let lastFlat='int451';
 try{const p=JSON.parse(localStorage.getItem('trote-prefs')||'{}'); if(PROGRAMS[p.lastFlat]) lastFlat=p.lastFlat;}catch(e){}
 function renderChips(){
-  $('chips').innerHTML=[0,1,2].map(i=>`<div class="ph" id="ph${i}">${phShort(i)}<small>${P().chips[i]}</small></div>`).join('');
+  $('chips').innerHTML=P().phases.map((_,i)=>`<div class="ph" id="ph${i}">${phShort(i)}<small>${P().chips[i]}</small></div>`).join('');
   const isFlat=!!P().flat;
   $('progs').innerHTML=
     `<div class="seg2"><button data-k="cerro" class="${progKey==='cerro'?'on':''}">Cerro</button><button data-k="${isFlat?progKey:lastFlat}" class="${isFlat?'on':''}">Plano</button>`+
-    `<button data-k="eval" class="${progKey==='eval'?'on':''}">Evaluación</button><button data-k="fuerza" class="${progKey==='fuerza'?'on':''}">Fuerza</button></div>`+
+    `<button data-k="eval" class="${progKey==='eval'?'on':''}">Evaluación</button><button data-k="fuerza" class="${progKey==='fuerza'?'on':''}">Fuerza</button><button data-k="monitor" class="${progKey==='monitor'?'on':''}">Monitor</button></div>`+
     (isFlat?`<div class="lvls">`+FLAT_LEVELS.map(L=>{const p=PROGRAMS[L.key];
       return `<button data-k="${L.key}" class="${L.key===progKey?'on':''}"><b>${L.lvl}</b><span>${p.pattern}</span><small>${String(p.trotTotal).replace('.',',')}′ trote</small></button>`;}).join('')+`</div>`:'');
   $('progs').querySelectorAll('button').forEach(b=>b.onclick=()=>{
@@ -672,7 +681,7 @@ function render(){
   $('progs').style.display=S.started?'none':'flex';
   $('gps').style.display=P().gps===false?'none':'flex';
   renderTurn();
-  for(let i=0;i<3;i++){const el=$('ph'+i);el.classList.toggle('on',i===S.phase&&!S.done&&S.started);el.classList.toggle('past',i<S.phase||S.done);}
+  for(let i=0;i<3;i++){const el=$('ph'+i);if(!el)continue;el.classList.toggle('on',i===S.phase&&!S.done&&S.started);el.classList.toggle('past',i<S.phase||S.done);}
 
   // gps chip
   const gc=$('gps'),gt=$('gpsTxt');gc.className='gps';
@@ -694,9 +703,10 @@ function render(){
   if(P().gps===false){
     $('l1').textContent='Pulso máx.'; $('sSpd').innerHTML=T.hrMax?T.hrMax+'<small> lpm</small>':'–';
     $('l2').textContent='Pulso medio'; $('sGrade').innerHTML=T.hrN?avgHR(T)+'<small> lpm</small>':'–';
-    let nTot=0; for(let ph=0;ph<3;ph++) for(let i=0;seg(ph,i);i++) nTot++;
-    $('l3').textContent='Tramo'; $('sDist').innerHTML=(cur?cur.n:S.done?nTot:0)+'<small> de '+nTot+'</small>';
-    $('l4').textContent='En '+phShort(S.phase).toLowerCase(); $('sSeg').textContent=fmt(S.phaseMs);
+    if(P().laps){ $('l3').textContent='Vueltas'; $('sDist').textContent=segs.length||0; }
+    else { let nTot=0; for(let ph=0;ph<3;ph++) for(let i=0;seg(ph,i);i++) nTot++;
+      $('l3').textContent='Tramo'; $('sDist').innerHTML=(cur?cur.n:S.done?nTot:0)+'<small> de '+nTot+'</small>'; }
+    $('l4').textContent=P().laps?'Esta vuelta':'En '+phShort(S.phase).toLowerCase(); $('sSeg').textContent=fmt(P().laps?S.segMs:S.phaseMs);
   } else { $('l1').textContent='Velocidad'; $('l2').textContent='Pendiente'; $('l3').textContent='Distancia'; $('l4').textContent='Este tramo'; }
   { const b=hrLive(), a=avgHR(cur);
     $('sHr').innerHTML=b?b+'<small> lpm'+(a?' · '+a:'')+'</small>':(S.done&&T.hrN?avgHR(T)+'<small> prom.</small>':'–');
@@ -721,8 +731,8 @@ function render(){
   const sg=seg(S.phase,S.idx);
   root.style.setProperty('--accent',MODE_COL[sg.mode]||'var(--walk)');
   const ta=S.started?tempoAt(sg,S.segMs):null;
-  const bigTxt=!S.started?'LISTO':(ta&&!ta.done?ta.step.w:(ta&&ta.done?'¡BIEN!':(sg.big||MODE_BIG[sg.mode])));
-  $('mode').textContent=bigTxt; $('mode').style.fontSize=bigTxt.length>10?'clamp(28px,8.5vw,40px)':bigTxt.length>7?'clamp(34px,10vw,52px)':'';
+  const bigTxt=P().laps?(hrLive()?'♥ '+hrLive():(S.started?'SIN PULSO':'LISTO')):!S.started?'LISTO':(ta&&!ta.done?ta.step.w:(ta&&ta.done?'¡BIEN!':(sg.big||MODE_BIG[sg.mode])));
+  $('mode').textContent=bigTxt; $('mode').style.color=P().laps&&hrLive()?'#ff5c7a':''; $('mode').style.fontSize=bigTxt.length>10?'clamp(28px,8.5vw,40px)':bigTxt.length>7?'clamp(34px,10vw,52px)':'';
   if(S.started){
     let sub=phName(S.phase);
     const tot=P().cycles[S.phase];
@@ -748,6 +758,7 @@ function render(){
     else t='Presiona <b>Terminar</b> al llegar';
   } else {
     const n=nx||(S.phase<2?seg(S.phase+1,0):null);
+    if(P().laps) t='<b>Nueva vuelta</b> separa tramos · <b>Terminar</b> cierra el registro'; else
     t=n?'Luego: <b>'+(n.label||verb(n.mode))+(n.set?' · serie '+n.set+' ('+n.reps+' reps)':' '+fmt(n.dur*1000))+'</b>':'Último tramo · termina solo';
   }
   $('next').innerHTML=t;
@@ -760,9 +771,11 @@ function render(){
     else{pb.textContent='Terminar ✓';pb.classList.add('hl');}
   } else {
     pb.classList.remove('hl');
-    pb.textContent=S.phase<2?'Saltar fase →':'Terminar ahora ✓';
+    pb.textContent=P().laps?'Terminar ✓':(S.phase<2?'Saltar fase →':'Terminar ahora ✓');
+    if(P().laps) pb.classList.add('hl');
   }
-  $('skipBtn').disabled=!S.started||sg.dur==null;
+  $('skipBtn').disabled=!S.started||(sg.dur==null&&!P().laps);
+  $('skipBtn').textContent=P().laps?'Nueva vuelta ⟳':'Saltar intervalo';
 }
 
 // ---------- chart ----------
@@ -933,7 +946,7 @@ function buildTextHR(){
   const d=S.startWall?new Date(S.startWall):new Date();
   const date=d.toLocaleDateString('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'})+', '+d.toLocaleTimeString('es-CL',{hour:'2-digit',minute:'2-digit'});
   const L=[], gps=P().gps!==false;
-  L.push((gps?'🫀 ':'💪 ')+P().name+' · '+date+(S.done?'':' (en curso)'));
+  L.push((P().laps?'❤️ ':gps?'🫀 ':'💪 ')+P().name+' · '+date+(S.done?'':' (en curso)'));
   L.push('');
   L.push(`⏱ ${fmt(S.totMs)}`+(T.pauses?` · ${T.pauses} pausa${T.pauses>1?'s':''} (${fmt(T.pausedMs+livePaused())})`:''));
   if(T.hrN) L.push(`❤️ Pulso medio ${avgHR(T)} · máx ${T.hrMax} · mín ${T.hrMin} lpm`); else L.push('❤️ Sin datos de pulso (banda no conectada)');
